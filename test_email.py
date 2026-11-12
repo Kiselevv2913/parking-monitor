@@ -22,7 +22,7 @@ email.set_content(
 print("Подключаемся к Яндекс SMTP...")
 
 with smtplib.SMTP_SSL("smtp.yandex.ru", 465, timeout=30) as server:
-    server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+    server.login("kiselev.dm.s", EMAIL_PASSWORD)
     print("Авторизация успешна!")
 
     server.send_message(email)
