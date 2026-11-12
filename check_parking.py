@@ -48,7 +48,7 @@ def send_email(subject, message):
     email.set_content(message)
 
     with smtplib.SMTP_SSL(
-        "smtp.yandex.ru", 465, timeout=30
+        "smtp.yandex.com", 465, timeout=30
     ) as server:
         server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
         server.send_message(email)
