@@ -2,7 +2,9 @@
 import os
 import json
 import smtplib
+import traceback
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from email.message import EmailMessage
 from playwright.sync_api import sync_playwright
 
@@ -22,10 +24,17 @@ MONTHS = {
 REGION_ID = "0400"
 STATUS_FILE = "parking_status.json"
 
-# Почта: данные будут передаваться через GitHub Secrets
+# Московское время
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+
+# Почта
 EMAIL_ADDRESS = "kiselev.dm.s@yandex.ru"
 EMAIL_TO = "kiselev.dm.s@yandex.ru"
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+
+
+def now_moscow():
+    return datetime.now(MOSCOW_TZ)
 
 
 def send_email(subject, message):
@@ -54,6 +63,7 @@ def load_status():
                 return json.load(file)
         except (json.JSONDecodeError, OSError):
             print("Не удалось прочитать старое состояние.")
+
     return {}
 
 
@@ -118,59 +128,135 @@ def check_parkings(page, month_name, checkbox_id):
     return results
 
 
+def send_daily_report(current_status):
+    current_time = now_moscow()
+
+    report = [
+        "Ежедневный контрольный отчёт мониторинга парковок.",
+        "",
+        f"Дата и время: {current_time.strftime('%d.%m.%Y %H:%M:%S')}",
+        "",
+        "Результаты проверки:"
+    ]
+
+    for key, available in current_status.items():
+        if key.startswith("__"):
+            continue
+
+        month_name, parking_name = key.split("|", 1)
+
+        report.append(
+            f"{month_name}, {parking_name}: "
+            f"{'ДОСТУПЕН' if available else 'НЕДОСТУПЕН'}"
+        )
+
+    report.extend([
+        "",
+        "Проверка сайта завершилась успешно.",
+        "Мониторинг работает."
+    ])
+
+    send_email(
+        "Мониторинг парковок — ежедневный отчёт",
+        "\n".join(report)
+    )
+
+
 def main():
     print("=" * 55)
     print("МОНИТОРИНГ ПАРКОВОК")
-    print("Время проверки:", datetime.now().strftime("%d.%m.%Y %H:%M:%S"))
+    print("Время проверки:", now_moscow().strftime("%d.%m.%Y %H:%M:%S"))
     print("=" * 55)
 
     old_status = load_status()
     current_status = {}
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
 
-        try:
-            page = browser.new_page()
+            try:
+                page = browser.new_page()
 
-            page.goto(
-                URL,
-                wait_until="domcontentloaded",
-                timeout=60000
-            )
-
-            page.wait_for_timeout(5000)
-
-            for month_name, checkbox_id in MONTHS.items():
-                print(f"\nПроверяем: {month_name}")
-
-                results = check_parkings(
-                    page, month_name, checkbox_id
+                page.goto(
+                    URL,
+                    wait_until="domcontentloaded",
+                    timeout=60000
                 )
 
-                for parking_name, available in results.items():
-                    key = f"{month_name}|{parking_name}"
-                    current_status[key] = available
+                page.wait_for_timeout(5000)
 
-                    if old_status.get(key) is False and available:
-                        print("ОБНАРУЖЕНА ДОСТУПНОСТЬ!")
+                for month_name, checkbox_id in MONTHS.items():
+                    print(f"\nПроверяем: {month_name}")
 
-                        send_email(
-                            "Появилось место на парковке!",
-                            f"Обнаружена доступность:\n"
-                            f"{month_name}\n"
-                            f"{parking_name}\n\n"
-                            f"Время проверки: "
-                            f"{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
-                        )
+                    results = check_parkings(
+                        page, month_name, checkbox_id
+                    )
 
-            save_status(current_status)
+                    for parking_name, available in results.items():
+                        key = f"{month_name}|{parking_name}"
+                        current_status[key] = available
 
-            print("\nРезультаты сохранены.")
-            print("Проверка завершена успешно.")
+                        if old_status.get(key) is False and available:
+                            print("ОБНАРУЖЕНА ДОСТУПНОСТЬ!")
 
-        finally:
-            browser.close()
+                            send_email(
+                                "Появилось место на парковке!",
+                                f"Обнаружена доступность:\n"
+                                f"{month_name}\n"
+                                f"{parking_name}\n\n"
+                                f"Время проверки: "
+                                f"{now_moscow().strftime('%d.%m.%Y %H:%M:%S')}"
+                            )
+
+            finally:
+                browser.close()
+
+        print("\nПроверка завершена успешно.")
+
+        # Проверяем необходимость ежедневного письма
+        current_time = now_moscow()
+        today = current_time.strftime("%Y-%m-%d")
+
+        last_report_date = old_status.get("__last_daily_report_date")
+
+        if current_time.hour >= 7 and last_report_date != today:
+            print("\nВремя отправить ежедневный отчёт.")
+
+            send_daily_report(current_status)
+
+            current_status["__last_daily_report_date"] = today
+
+        elif last_report_date == today:
+            current_status["__last_daily_report_date"] = today
+
+        save_status(current_status)
+
+        print("Результаты сохранены.")
+        print("Работа завершена успешно.")
+
+    except Exception as error:
+        print("\nОШИБКА МОНИТОРИНГА:")
+        traceback.print_exc()
+
+        error_message = (
+            "Во время проверки парковок произошла ошибка.\n\n"
+            f"Время: {now_moscow().strftime('%d.%m.%Y %H:%M:%S')}\n\n"
+            f"Описание ошибки:\n{str(error)}\n\n"
+            "Подробности:\n"
+            f"{traceback.format_exc()}"
+        )
+
+        try:
+            send_email(
+                "ОШИБКА мониторинга парковок!",
+                error_message
+            )
+        except Exception as email_error:
+            print("Не удалось отправить письмо об ошибке:")
+            print(email_error)
+
+        raise
 
 
 if __name__ == "__main__":
