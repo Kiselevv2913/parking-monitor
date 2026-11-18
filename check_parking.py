@@ -175,6 +175,7 @@ def send_daily_report(current_status):
 
 
 
+
 def main():
     print("=" * 55)
     print("МОНИТОРИНГ ПАРКОВОК")
@@ -197,89 +198,83 @@ def main():
                     timeout=60000
                 )
 
-                
-page.wait_for_timeout(5000)
+                page.wait_for_timeout(5000)
 
-# Ждём появления хотя бы одного поля выбора месяца.
-# Если оба отсутствуют, считаем это ошибкой загрузки страницы.
-page.wait_for_function(
-    """() =>
-        document.querySelector('#parking-barries-checkbox1') ||
-        document.querySelector('#parking-barries-checkbox2')
-    """,
-    timeout=20000
-)
+                # Ждём появления хотя бы одного поля выбора месяца.
+                page.wait_for_function(
+                    """() =>
+                        document.querySelector('#parking-barries-checkbox1') ||
+                        document.querySelector('#parking-barries-checkbox2')
+                    """,
+                    timeout=20000
+                )
 
-skipped_months = []
+                skipped_months = []
 
-for month_name, checkbox_id in MONTHS.items():
+                for month_name, checkbox_id in MONTHS.items():
 
-    print(f"\nПроверяем: {month_name}")
+                    print(f"\nПроверяем: {month_name}")
 
-    checkbox = page.locator(f"#{checkbox_id}")
+                    checkbox = page.locator(f"#{checkbox_id}")
 
-    # Текущий месяц может временно отсутствовать на сайте.
-    if checkbox.count() == 0:
+                    # Если текущий месяц отсутствует, пропускаем его.
+                    if checkbox.count() == 0:
 
-        if month_name == "Текущий месяц":
+                        if month_name == "Текущий месяц":
 
-            print(
-                "ПОЛЕ ТЕКУЩЕГО МЕСЯЦА ОТСУТСТВУЕТ. "
-                "Пропускаем его."
-            )
+                            print(
+                                "ПОЛЕ ТЕКУЩЕГО МЕСЯЦА ОТСУТСТВУЕТ. "
+                                "Пропускаем его."
+                            )
 
-            skipped_months.append(month_name)
+                            skipped_months.append(month_name)
 
-            # Сохраняем предыдущие результаты,
-            # чтобы не потерять историю доступности.
-            for parking_name in PARKINGS:
-                key = f"{month_name}|{parking_name}"
+                            # Сохраняем предыдущие результаты.
+                            for parking_name in PARKINGS:
+                                key = f"{month_name}|{parking_name}"
 
-                if key in old_status:
-                    current_status[key] = old_status[key]
+                                if key in old_status:
+                                    current_status[key] = old_status[key]
 
-            continue
+                            continue
 
-        # Отсутствие следующего месяца считаем ошибкой.
-        raise RuntimeError(
-            f"Не найден обязательный элемент выбора: {month_name}"
-        )
+                        # Следующий месяц должен присутствовать.
+                        raise RuntimeError(
+                            f"Не найден обязательный элемент выбора: {month_name}"
+                        )
 
-    results = check_parkings(
-        page, month_name, checkbox_id
-    )
+                    results = check_parkings(
+                        page, month_name, checkbox_id
+                    )
 
-    for parking_name, available in results.items():
+                    for parking_name, available in results.items():
 
-        key = f"{month_name}|{parking_name}"
-        current_status[key] = available
+                        key = f"{month_name}|{parking_name}"
+                        current_status[key] = available
 
-        if old_status.get(key) is False and available:
+                        if old_status.get(key) is False and available:
 
-            print("ОБНАРУЖЕНА ДОСТУПНОСТЬ!")
+                            print("ОБНАРУЖЕНА ДОСТУПНОСТЬ!")
 
-            send_email(
-                "Появилось место на парковке!",
-                f"Обнаружена доступность:\n"
-                f"{month_name}\n"
-                f"{parking_name}\n\n"
-                f"Время проверки: "
-                f"{now_moscow().strftime('%d.%m.%Y %H:%M:%S')}"
-            )
+                            send_email(
+                                "Появилось место на парковке!",
+                                f"Обнаружена доступность:\n"
+                                f"{month_name}\n"
+                                f"{parking_name}\n\n"
+                                f"Время проверки: "
+                                f"{now_moscow().strftime('%d.%m.%Y %H:%M:%S')}"
+                            )
 
-# Сохраняем информацию о пропущенных месяцах
-if skipped_months:
-    current_status["__skipped_months"] = skipped_months
-
-                                                
-                            
+                # Сохраняем информацию о пропущенных месяцах.
+                if skipped_months:
+                    current_status["__skipped_months"] = skipped_months
 
             finally:
                 browser.close()
 
         print("\nПроверка завершена успешно.")
 
-        # Проверяем необходимость ежедневного письма
+        # Проверяем необходимость ежедневного письма.
         current_time = now_moscow()
         today = current_time.strftime("%Y-%m-%d")
 
@@ -322,6 +317,7 @@ if skipped_months:
             print(email_error)
 
         raise
+
 
 
 if __name__ == "__main__":
