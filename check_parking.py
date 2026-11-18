@@ -128,8 +128,10 @@ def check_parkings(page, month_name, checkbox_id):
     return results
 
 
+
 def send_daily_report(current_status):
     current_time = now_moscow()
+    skipped_months = current_status.get("__skipped_months", [])
 
     report = [
         "Ежедневный контрольный отчёт мониторинга парковок.",
@@ -145,10 +147,20 @@ def send_daily_report(current_status):
 
         month_name, parking_name = key.split("|", 1)
 
+        if month_name in skipped_months:
+            continue
+
         report.append(
             f"{month_name}, {parking_name}: "
             f"{'ДОСТУПЕН' if available else 'НЕДОСТУПЕН'}"
         )
+
+    if skipped_months:
+        report.extend([
+            "",
+            "Не проверялись следующие месяцы:",
+            *skipped_months
+        ])
 
     report.extend([
         "",
@@ -160,6 +172,7 @@ def send_daily_report(current_status):
         "Мониторинг парковок — ежедневный отчёт",
         "\n".join(report)
     )
+
 
 
 def main():
@@ -184,30 +197,82 @@ def main():
                     timeout=60000
                 )
 
-                page.wait_for_timeout(5000)
+                
+page.wait_for_timeout(5000)
 
-                for month_name, checkbox_id in MONTHS.items():
-                    print(f"\nПроверяем: {month_name}")
+# Ждём появления хотя бы одного поля выбора месяца.
+# Если оба отсутствуют, считаем это ошибкой загрузки страницы.
+page.wait_for_function(
+    """() =>
+        document.querySelector('#parking-barries-checkbox1') ||
+        document.querySelector('#parking-barries-checkbox2')
+    """,
+    timeout=20000
+)
 
-                    results = check_parkings(
-                        page, month_name, checkbox_id
-                    )
+skipped_months = []
 
-                    for parking_name, available in results.items():
-                        key = f"{month_name}|{parking_name}"
-                        current_status[key] = available
+for month_name, checkbox_id in MONTHS.items():
 
-                        if old_status.get(key) is False and available:
-                            print("ОБНАРУЖЕНА ДОСТУПНОСТЬ!")
+    print(f"\nПроверяем: {month_name}")
 
-                            send_email(
-                                "Появилось место на парковке!",
-                                f"Обнаружена доступность:\n"
-                                f"{month_name}\n"
-                                f"{parking_name}\n\n"
-                                f"Время проверки: "
-                                f"{now_moscow().strftime('%d.%m.%Y %H:%M:%S')}"
-                            )
+    checkbox = page.locator(f"#{checkbox_id}")
+
+    # Текущий месяц может временно отсутствовать на сайте.
+    if checkbox.count() == 0:
+
+        if month_name == "Текущий месяц":
+
+            print(
+                "ПОЛЕ ТЕКУЩЕГО МЕСЯЦА ОТСУТСТВУЕТ. "
+                "Пропускаем его."
+            )
+
+            skipped_months.append(month_name)
+
+            # Сохраняем предыдущие результаты,
+            # чтобы не потерять историю доступности.
+            for parking_name in PARKINGS:
+                key = f"{month_name}|{parking_name}"
+
+                if key in old_status:
+                    current_status[key] = old_status[key]
+
+            continue
+
+        # Отсутствие следующего месяца считаем ошибкой.
+        raise RuntimeError(
+            f"Не найден обязательный элемент выбора: {month_name}"
+        )
+
+    results = check_parkings(
+        page, month_name, checkbox_id
+    )
+
+    for parking_name, available in results.items():
+
+        key = f"{month_name}|{parking_name}"
+        current_status[key] = available
+
+        if old_status.get(key) is False and available:
+
+            print("ОБНАРУЖЕНА ДОСТУПНОСТЬ!")
+
+            send_email(
+                "Появилось место на парковке!",
+                f"Обнаружена доступность:\n"
+                f"{month_name}\n"
+                f"{parking_name}\n\n"
+                f"Время проверки: "
+                f"{now_moscow().strftime('%d.%m.%Y %H:%M:%S')}"
+            )
+
+# Сохраняем информацию о пропущенных месяцах
+if skipped_months:
+    current_status["__skipped_months"] = skipped_months
+
+                                                
+                            
 
             finally:
                 browser.close()
