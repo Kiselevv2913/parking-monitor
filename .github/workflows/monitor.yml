@@ -12,7 +12,7 @@ permissions:
 jobs:
   check-parking:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Get repository
@@ -23,10 +23,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Cache Playwright Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-1.65.2-chromium
+
       - name: Install dependencies
         run: |
-          pip install playwright
-          playwright install --with-deps chromium
+          pip install playwright==1.65.2
+          playwright install chromium
 
       - name: Run parking monitor
         env:
